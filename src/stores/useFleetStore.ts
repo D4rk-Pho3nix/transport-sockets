@@ -1,204 +1,100 @@
 import { create } from 'zustand';
-import type { Truck, TruckPosition, TrailPoint, TimelineSnapshot, AlertEvent, TruckStatus } from '../types';
-import { haversineDistance } from '../lib/haversine';
-import { PARKED_TIMEOUT_MS, OFFLINE_TIMEOUT_MS, STATUS_PRIORITY } from '../lib/constants';
+import type { Truck, Driver, Position, TrailPoint, TruckStatus } from '../types';
 
 interface FleetState {
   trucks: Truck[];
-  positions: Record<string, TruckPosition>;
+  drivers: Driver[];
+  positions: Record<string, Position>;
   trails: Record<string, TrailPoint[]>;
-  dailyDistances: Record<string, number>;
-  timelineSnapshots: Record<string, TimelineSnapshot[]>;
-  alertEvents: AlertEvent[];
-  statusChangedAt: Record<string, string>;
-
-  viewMode: 'fleet' | 'individual';
   selectedTruckId: string | null;
-  markerStyle: 'truck' | 'driver';
-  detailPanelOpen: boolean;
-
-  statusFilter: string[];
-  cargoFilter: string[];
-  routeFilter: string[];
-  driverSearch: string;
+  statusFilter: string;
+  searchQuery: string;
 
   setTrucks: (trucks: Truck[]) => void;
-  setPositions: (positions: Record<string, TruckPosition>) => void;
-  setTrails: (trails: Record<string, TrailPoint[]>) => void;
-  setDailyDistances: (distances: Record<string, number>) => void;
-  setTimelineSnapshots: (snapshots: Record<string, TimelineSnapshot[]>) => void;
-  setAlertEvents: (events: AlertEvent[]) => void;
-
-  updatePosition: (truckId: string, lat: number, lng: number, speed: number, accuracy: number, timestamp: string) => void;
-  updateTruckStatuses: () => void;
-
-  selectTruck: (truckId: string | null) => void;
-  setViewMode: (mode: 'fleet' | 'individual') => void;
-  toggleMarkerStyle: () => void;
-  openDetailPanel: () => void;
-  closeDetailPanel: () => void;
-
-  setStatusFilter: (statuses: string[]) => void;
-  setCargoFilter: (types: string[]) => void;
-  setRouteFilter: (routes: string[]) => void;
-  setDriverSearch: (query: string) => void;
-  clearFilters: () => void;
+  setDrivers: (drivers: Driver[]) => void;
+  updatePosition: (truckId: string, pos: Position) => void;
+  selectTruck: (id: string | null) => void;
+  setStatusFilter: (filter: string) => void;
+  setSearchQuery: (query: string) => void;
 }
 
-export const useFleetStore = create<FleetState>((set, get) => ({
-  trucks: [],
-  positions: {},
-  trails: {},
-  dailyDistances: {},
-  timelineSnapshots: {},
-  alertEvents: [],
-  statusChangedAt: {},
+// 20 Perceptually distinct colors from PRD
+const TRUCK_COLORS = [
+  '#E63946', '#2A9D8F', '#E9C46A', '#264653', '#F4A261',
+  '#6A0572', '#0077B6', '#57CC99', '#FF6B6B', '#118AB2',
+  '#06D6A0', '#FFD166', '#EF476F', '#073B4C', '#8338EC',
+  '#3A86FF', '#FB5607', '#FF006E', '#FFBE0B', '#8AC926'
+];
 
-  viewMode: 'fleet',
-  selectedTruckId: null,
-  markerStyle: 'truck',
-  detailPanelOpen: false,
-
-  statusFilter: [],
-  cargoFilter: [],
-  routeFilter: [],
-  driverSearch: '',
-
-  setTrucks: (trucks) => set({ trucks }),
-  setPositions: (positions) => set({ positions }),
-  setTrails: (trails) => set({ trails }),
-  setDailyDistances: (distances) => set({ dailyDistances: distances }),
-  setTimelineSnapshots: (snapshots) => set({ timelineSnapshots: snapshots }),
-  setAlertEvents: (events) => set({ alertEvents: events }),
-
-  updatePosition: (truckId, lat, lng, speed, accuracy, timestamp) => {
-    const state = get();
-    const prevPosition = state.positions[truckId];
-
-    let addedDistance = 0;
-    if (prevPosition) {
-      const dist = haversineDistance(prevPosition.lat, prevPosition.lng, lat, lng);
-      if (dist < 1 && dist > 0.001) {
-        addedDistance = dist;
-      }
-    }
-
-    const newPosition: TruckPosition = { truckId, lat, lng, speed, accuracy, timestamp };
-
-    const newTrailPoint: TrailPoint = { lat, lng, timestamp };
-    const existingTrail = state.trails[truckId] || [];
-
-    const newStatus: TruckStatus = speed > 2 ? 'moving' : 'idle';
-
-    const currentTruck = state.trucks.find(t => t.id === truckId);
-    const oldStatus = currentTruck?.status;
-
-    set({
-      positions: { ...state.positions, [truckId]: newPosition },
-      trails: { ...state.trails, [truckId]: [...existingTrail, newTrailPoint] },
-      dailyDistances: {
-        ...state.dailyDistances,
-        [truckId]: (state.dailyDistances[truckId] || 0) + addedDistance,
-      },
-      trucks: state.trucks.map(t =>
-        t.id === truckId ? { ...t, status: newStatus } : t
-      ),
-      statusChangedAt: oldStatus !== newStatus
-        ? { ...state.statusChangedAt, [truckId]: timestamp }
-        : state.statusChangedAt,
-    });
-  },
-
-  updateTruckStatuses: () => {
-    const state = get();
-    const now = Date.now();
-
-    const updatedTrucks = state.trucks.map(truck => {
-      const pos = state.positions[truck.id];
-      if (!pos) return truck;
-
-      const elapsed = now - new Date(pos.timestamp).getTime();
-
-      if (truck.status === 'moving' || truck.status === 'idle') {
-        if (elapsed > OFFLINE_TIMEOUT_MS) {
-          return { ...truck, status: 'offline' as TruckStatus };
-        }
-        if (elapsed > PARKED_TIMEOUT_MS) {
-          return { ...truck, status: 'parked' as TruckStatus };
-        }
-      }
-      return truck;
-    });
-
-    set({ trucks: updatedTrucks });
-  },
-
-  selectTruck: (truckId) => set({
-    selectedTruckId: truckId,
-    detailPanelOpen: truckId !== null,
-  }),
-
-  setViewMode: (mode) => set({ viewMode: mode }),
-
-  toggleMarkerStyle: () => set(s => ({
-    markerStyle: s.markerStyle === 'truck' ? 'driver' : 'truck',
-  })),
-
-  openDetailPanel: () => set({ detailPanelOpen: true }),
-  closeDetailPanel: () => set({ detailPanelOpen: false, selectedTruckId: null }),
-
-  setStatusFilter: (statuses) => set({ statusFilter: statuses }),
-  setCargoFilter: (types) => set({ cargoFilter: types }),
-  setRouteFilter: (routes) => set({ routeFilter: routes }),
-  setDriverSearch: (query) => set({ driverSearch: query }),
-  clearFilters: () => set({
-    statusFilter: [],
-    cargoFilter: [],
-    routeFilter: [],
-    driverSearch: '',
-  }),
+const MOCK_DRIVERS: Driver[] = Array.from({ length: 20 }, (_, i) => ({
+  id: `DRV-${i + 1}`,
+  full_name: `Driver ${i + 1}`,
+  phone: `+91 98${Math.floor(Math.random() * 9000) + 1000} ${Math.floor(Math.random() * 90) + 10}999`,
+  license_number: `DL-${Math.floor(Math.random() * 1000000)}`,
+  status: 'active',
+  assigned_truck_id: `TRK-${i + 1 < 10 ? '0' : ''}${i + 1}`
 }));
 
-// Selectors
-export function getFilteredTrucks(state: FleetState): Truck[] {
-  let filtered = [...state.trucks];
+const MOCK_TRUCKS: Truck[] = Array.from({ length: 20 }, (_, i) => {
+  const truckId = `TRK-${i + 1 < 10 ? '0' : ''}${i + 1}`;
+  return {
+    id: truckId,
+    truck_number: truckId,
+    plate_number: `KA 01 AB ${Math.floor(Math.random() * 9000) + 1000}`,
+    color: TRUCK_COLORS[i],
+    cargo_type: ['Heavy Machinery', 'Chemical', 'FMCG', 'Electronics'][i % 4],
+    assigned_route: ['Bengaluru → Mysuru', 'Mumbai → Pune', 'Delhi → Jaipur', 'Chennai → Kochi'][i % 4],
+    driver_id: MOCK_DRIVERS[i].id,
+    driver: MOCK_DRIVERS[i],
+    status: 'idle' as TruckStatus,
+    daily_distance: 0
+  };
+});
 
-  if (state.statusFilter.length > 0) {
-    filtered = filtered.filter(t => state.statusFilter.includes(t.status));
-  }
-  if (state.cargoFilter.length > 0) {
-    filtered = filtered.filter(t => t.cargo_type && state.cargoFilter.includes(t.cargo_type));
-  }
-  if (state.routeFilter.length > 0) {
-    filtered = filtered.filter(t => t.assigned_route && state.routeFilter.includes(t.assigned_route));
-  }
-  if (state.driverSearch.trim()) {
-    const q = state.driverSearch.toLowerCase();
-    filtered = filtered.filter(t =>
-      t.drivers?.full_name?.toLowerCase().includes(q) ||
-      t.truck_number.toLowerCase().includes(q)
-    );
-  }
+const INITIAL_POSITIONS: Record<string, {lat: number, lng: number}> = {
+  'TRK-01': { lat: 10.753167, lng: 78.651444 },
+  'TRK-02': { lat: 10.784054, lng: 78.688216 }
+};
 
-  filtered.sort((a, b) => {
-    const pa = STATUS_PRIORITY[a.status] ?? 4;
-    const pb = STATUS_PRIORITY[b.status] ?? 4;
-    if (pa !== pb) return pa - pb;
-    return a.truck_number.localeCompare(b.truck_number);
+export const useFleetStore = create<FleetState>((set, get) => ({
+  trucks: MOCK_TRUCKS,
+  drivers: MOCK_DRIVERS,
+  positions: {},
+  trails: {},
+  selectedTruckId: null,
+  statusFilter: 'All',
+  searchQuery: '',
+
+  setTrucks: (trucks) => set({ trucks }),
+  setDrivers: (drivers) => set({ drivers }),
+  
+  updatePosition: (truckId, pos) => {
+    const state = get();
+    const currentTrails = state.trails[truckId] || [];
+    
+    // Simple status logic: if pos changed, it's moving
+    const prevPos = state.positions[truckId];
+    let newStatus: TruckStatus = 'moving';
+    if (prevPos && prevPos.lat === pos.lat && prevPos.lng === pos.lng) {
+      newStatus = 'idle';
+    }
+
+    set({
+      positions: { ...state.positions, [truckId]: pos },
+      trails: { ...state.trails, [truckId]: [...currentTrails.slice(-50), { ...pos }] },
+      trucks: state.trucks.map(t => t.id === truckId ? { ...t, status: newStatus, last_ping: pos.timestamp } : t)
+    });
+  },
+
+  selectTruck: (id) => set({ selectedTruckId: id }),
+  setStatusFilter: (filter) => set({ statusFilter: filter }),
+  setSearchQuery: (query) => set({ searchQuery: query }),
+}));
+
+Object.entries(INITIAL_POSITIONS).forEach(([id, coords]) => {
+  useFleetStore.getState().updatePosition(id, {
+    lat: coords.lat,
+    lng: coords.lng,
+    timestamp: new Date().toISOString()
   });
-
-  return filtered;
-}
-
-export function getKPIStats(state: FleetState) {
-  const total = state.trucks.length;
-  const moving = state.trucks.filter(t => t.status === 'moving').length;
-  const idle = state.trucks.filter(t => t.status === 'idle').length;
-  const parked = state.trucks.filter(t => t.status === 'parked').length;
-  const offline = state.trucks.filter(t => t.status === 'offline').length;
-  const active = total - offline;
-  const totalDistance = Object.values(state.dailyDistances).reduce((sum, d) => sum + d, 0);
-  const unreadAlerts = state.alertEvents.filter(e => !e.is_read).length;
-
-  return { total, moving, idle, parked, offline, active, totalDistance, unreadAlerts };
-}
+});

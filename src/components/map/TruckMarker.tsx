@@ -1,123 +1,53 @@
-import { useRef, useEffect } from 'react';
-import { Marker, Tooltip } from 'react-leaflet';
+import React from 'react';
+import { Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
-import type { Truck, TruckPosition } from '../../types';
-import { STATUS_COLORS, STATUS_LABELS } from '../../lib/constants';
-import { formatSpeed } from '../../lib/formatters';
+import type { Truck } from '../../types';
 
 interface TruckMarkerProps {
   truck: Truck;
-  position: TruckPosition;
-  markerStyle: 'truck' | 'driver';
-  isSelected: boolean;
-  isDimmed: boolean;
-  onClick: () => void;
+  position: [number, number];
 }
 
-function buildTruckIcon(truck: Truck, isSelected: boolean, isDimmed: boolean): L.DivIcon {
-  const pulse = '';
-  const dimClass = isDimmed ? 'opacity-40 grayscale' : '';
-  const offlineClass = truck.status === 'offline' ? 'grayscale' : '';
-  const selectedScale = isSelected ? 'transform: scale(1.15);' : '';
-
-  const svgHtml = `
-    <svg width="40" height="20" viewBox="0 0 80 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="0" y="6" width="48" height="24" rx="2" fill="${truck.color_hex}" />
-      <path d="M48 12 H66 Q72 12 74 18 L76 24 V30 H48 V12Z" fill="#2D3436" />
-      <path d="M56 14 H64 Q68 14 70 18 L72 22 H56 V14Z" fill="#636e72" opacity="0.6" />
-      <rect x="0" y="30" width="76" height="2" rx="1" fill="#2D3436" />
-      <circle cx="14" cy="34" r="5" fill="#1a1a1a" /><circle cx="14" cy="34" r="2.5" fill="#333" />
-      <circle cx="28" cy="34" r="5" fill="#1a1a1a" /><circle cx="28" cy="34" r="2.5" fill="#333" />
-      <circle cx="66" cy="34" r="5" fill="#1a1a1a" /><circle cx="66" cy="34" r="2.5" fill="#333" />
-    </svg>`;
-
-  const html = `
-    <div class="truck-marker ${pulse} ${dimClass} ${offlineClass}" style="${selectedScale}">
-      ${svgHtml}
-      <span class="truck-marker-label">${truck.truck_number}</span>
-    </div>`;
-
+const createTruckIcon = (color: string, truckNumber: string) => {
   return L.divIcon({
-    className: '',
-    html,
-    iconSize: [48, 36],
-    iconAnchor: [24, 36],
+    className: 'truck-marker-icon',
+    html: `
+      <div class="relative flex flex-col items-center">
+        <div class="w-8 h-8 rounded-full bg-white dark:bg-[#111111] border-2 border-white dark:border-[#2E2E2E] shadow-lg flex items-center justify-center overflow-hidden transition-all duration-300">
+           <svg 
+            viewBox="0 0 24 24" 
+            fill="${color}" 
+            stroke="white" 
+            stroke-width="1.5" 
+            class="w-5 h-5 drop-shadow-md"
+          >
+            <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" />
+            <path d="M15 18H9" />
+            <path d="M19 18h2a1 1 0 0 0 1-1v-5h-7v5a1 1 0 0 0 1 1h2" />
+            <path d="M15 8h5a2 2 0 0 1 2 2v2h-7V8Z" />
+            <circle cx="7" cy="18" r="2" />
+            <circle cx="17" cy="18" r="2" />
+          </svg>
+        </div>
+        <div 
+          class="mt-1 px-1.5 py-0.5 rounded-md bg-white border border-[#E0E0E0] dark:bg-[#1A1A1A] dark:border-[#2E2E2E] text-[10px] font-bold text-[#0A0A0A] dark:text-[#F0F0F0] whitespace-nowrap shadow-sm translate-y-[-2px]"
+          style="border-bottom: 2px solid ${color}"
+        >
+          ${truckNumber}
+        </div>
+      </div>
+    `,
+    iconSize: [40, 50],
+    iconAnchor: [20, 40],
   });
-}
+};
 
-function buildDriverIcon(truck: Truck, isSelected: boolean, isDimmed: boolean): L.DivIcon {
-  const driverName = truck.drivers?.full_name || truck.truck_number;
-  const avatarUrl = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(driverName)}`;
-  const dimClass = isDimmed ? 'opacity-40 grayscale' : '';
-  const offlineClass = truck.status === 'offline' ? 'grayscale' : '';
-  const selectedScale = isSelected ? 'transform: scale(1.15);' : '';
-  const borderWidth = isSelected ? '4px' : '3px';
-
-  const html = `
-    <div class="driver-marker ${dimClass} ${offlineClass}" style="${selectedScale}">
-      <img src="${avatarUrl}" class="driver-photo" style="border-color: ${truck.color_hex}; border-width: ${borderWidth};" />
-    </div>`;
-
-  return L.divIcon({
-    className: '',
-    html,
-    iconSize: [46, 46],
-    iconAnchor: [23, 23],
-  });
-}
-
-export default function TruckMarker({
-  truck,
-  position,
-  markerStyle,
-  isSelected,
-  isDimmed,
-  onClick,
-}: TruckMarkerProps) {
-  const markerRef = useRef<L.Marker>(null);
-  const prevTimestampRef = useRef<string>(position.timestamp);
-
-  useEffect(() => {
-    if (position.timestamp !== prevTimestampRef.current) {
-      prevTimestampRef.current = position.timestamp;
-      const el = markerRef.current?.getElement();
-      if (el) {
-        const inner = el.querySelector('.truck-marker, .driver-marker');
-        if (inner) {
-          inner.classList.add('marker-pulse');
-          setTimeout(() => inner.classList.remove('marker-pulse'), 600);
-        }
-      }
-    }
-  }, [position.timestamp]);
-
-  const icon =
-    markerStyle === 'truck'
-      ? buildTruckIcon(truck, isSelected, isDimmed)
-      : buildDriverIcon(truck, isSelected, isDimmed);
+export default function TruckMarker({ truck, position }: TruckMarkerProps) {
+  const icon = React.useMemo(() => createTruckIcon(truck.color, truck.truck_number), [truck.color, truck.truck_number]);
 
   return (
-    <Marker
-      ref={markerRef}
-      position={[position.lat, position.lng]}
-      icon={icon}
-      eventHandlers={{ click: onClick }}
-    >
-      <Tooltip direction="top" offset={[0, -20]} opacity={0.95}>
-        <div className="text-xs leading-relaxed">
-          <div className="font-semibold">{truck.truck_number}</div>
-          <div className="text-text-muted">{truck.number_plate}</div>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            <span
-              className="w-2 h-2 rounded-full inline-block"
-              style={{ backgroundColor: STATUS_COLORS[truck.status] }}
-            />
-            <span>{STATUS_LABELS[truck.status]}</span>
-            <span className="text-text-faint">|</span>
-            <span className="font-mono">{formatSpeed(position.speed)}</span>
-          </div>
-        </div>
-      </Tooltip>
+    <Marker position={position} icon={icon}>
+      {/* Popups excluded for Prototype v1.0, but keeping the container if needed */}
     </Marker>
   );
 }
